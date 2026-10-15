@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101827">
+  <title>Callclone — Voice calls made simple</title>
+  <style>
+    :root{color-scheme:dark;--bg:#0b1120;--panel:#121c2e;--line:#26354d;--text:#f4f7fb;--muted:#aab7ca;--accent:#45d483;--blue:#6da8ff}
+    *{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:radial-gradient(circle at top,#172744 0,#0b1120 48%);color:var(--text);min-height:100vh}
+    .wrap{width:min(920px,92%);margin:auto;padding:24px 0 44px}.brand{display:flex;align-items:center;gap:12px;font-weight:800;font-size:1.35rem}.logo{width:44px;height:44px;border-radius:14px;background:var(--accent);color:#082014;display:grid;place-items:center;font-size:24px}
+    .hero{text-align:center;padding:44px 0 28px}.pill{display:inline-block;border:1px solid #31523f;color:#a7f2c7;background:#10291f;padding:7px 12px;border-radius:999px;font-size:.85rem}.hero h1{font-size:clamp(2rem,7vw,3.8rem);line-height:1.05;margin:18px 0 12px;letter-spacing:-.04em}.hero p{color:var(--muted);max-width:590px;margin:0 auto;line-height:1.65}
+    .card{max-width:600px;margin:20px auto;background:rgba(18,28,46,.94);border:1px solid var(--line);border-radius:24px;padding:24px;box-shadow:0 18px 60px #0004}.card h2{margin:0 0 6px;font-size:1.3rem}.sub{margin:0 0 20px;color:var(--muted);font-size:.94rem}
+    label{display:block;font-weight:650;margin:16px 0 8px}input{width:100%;background:#0b1322;border:1px solid #34445d;border-radius:12px;padding:14px;color:var(--text);font:inherit;outline:none}input:focus{border-color:var(--blue);box-shadow:0 0 0 3px #6da8ff22}
+    .row{display:grid;grid-template-columns:1fr auto;gap:10px}.btn{border:0;border-radius:12px;padding:13px 16px;font:inherit;font-weight:750;cursor:pointer;transition:transform .12s,opacity .12s}.btn:active{transform:scale(.98)}.primary{background:var(--accent);color:#062014}.secondary{background:#26354d;color:var(--text)}.danger{background:#572b38;color:#ffdce3}.btn:disabled{opacity:.45;cursor:not-allowed}.full{width:100%;margin-top:14px}
+    .status{margin-top:16px;border-radius:12px;padding:12px 14px;background:#0b1322;border:1px solid var(--line);color:var(--muted);font-size:.93rem;line-height:1.5;overflow-wrap:anywhere}.status.ok{border-color:#286344;color:#a7f2c7}.status.error{border-color:#7b3544;color:#ffc1ca}
+    .callbox{display:none;text-align:center;margin-top:20px;padding-top:20px;border-top:1px solid var(--line)}.callbox.active{display:block}.avatar{margin:0 auto 12px;width:74px;height:74px;border-radius:50%;display:grid;place-items:center;background:#1f3b5e;font-size:2rem}.callname{font-size:1.2rem;font-weight:800}.timer{color:var(--muted);margin:6px 0 18px}.controls{display:flex;justify-content:center;gap:10px;flex-wrap:wrap}.hint{color:var(--muted);font-size:.86rem;line-height:1.6;margin-top:24px;text-align:center}.footer{text-align:center;color:#74839a;font-size:.82rem;margin-top:30px}
+    @media(max-width:480px){.card{padding:18px;border-radius:18px}.row{grid-template-columns:1fr}.row .btn{width:100%}.hero{padding-top:34px}}
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <div class="brand"><div class="logo">☎</div><span>Callclone</span></div>
+    <section class="hero">
+      <span class="pill">Simple • Private by design • Real-time audio</span>
+      <h1>Let your voice<br>bring people closer.</h1>
+      <p>Start a voice room and share its room code with someone you trust. No video, just a voice connection.</p>
+    </section>
+
+    <section class="card">
+      <h2>Start a voice call</h2>
+      <p class="sub">Choose a display name, then create a room or join one with a code.</p>
+      <label for="name">Your name</label>
+      <input id="name" maxlength="32" autocomplete="name" placeholder="Enter your name">
+      <div class="row">
+        <button id="createBtn" class="btn primary">Create a room</button>
+        <button id="copyBtn" class="btn secondary" disabled>Copy room code</button>
+      </div>
+      <label for="room">Room code</label>
+      <input id="room" maxlength="40" autocomplete="off" placeholder="Enter a room code">
+      <button id="joinBtn" class="btn primary full">Join voice call</button>
+      <div id="status" class="status" role="status" aria-live="polite">Ready when you are. Allow microphone access when your browser asks.</div>
+      <div id="callbox" class="callbox">
+        <div class="avatar">🎙️</div>
+        <div id="callname" class="callname">In the call</div>
+        <div id="timer" class="timer">Waiting for another person…</div>
+        <div class="controls">
+          <button id="muteBtn" class="btn secondary">Mute microphone</button>
+          <button id="leaveBtn" class="btn danger">Leave call</button>
+        </div>
+      </div>
+    </section>
+    <p class="hint">For the best experience, use HTTPS and allow microphone access. Calls require the Callclone signaling server to be running; see the README for setup and deployment.</p>
+    <div class="footer">Callclone · A starter project by Kingsley Ugonna</div>
+  </main>
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+  (() => {
+    const $ = id => document.getElementById(id);
+    const status = $('status');
+    let socket, localStream, peer, roomCode = '', muted = false, callStartedAt = null, timerInterval = null;
+    const pcs = new Map();
+    const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+
+    function showStatus(message, kind='') {
+      status.textContent = message;
+      status.className = 'status' + (kind ? ' ' + kind : '');
+    }
+    function getName() {
+      const name = $('name').value.trim();
+      if (!name) { $('name').focus(); throw new Error('Please enter your name first.'); }
+      return name;
+    }
+    function socketConnect() {
+      if (typeof io !== 'function') throw new Error('The Callclone server is not connected. Start the server and open this page from its address.');
+      if (!socket) {
+        socket = io();
+        socket.on('connect_error', () => showStatus('Cannot reach the Callclone server. Check that it is running and try again.', 'error'));
+        socket.on('room-created', code => {
+          roomCode = code; $('room').value = code; $('copyBtn').disabled = false;
+          showStatus('Room created. Share this code with the person you want to call: ' + code, 'ok');
+        });
+        socket.on('peer-joined', async ({id, name}) => {
+          showStatus(name + ' joined. Connecting audio…', 'ok');
+          try { await makeOffer(id); } catch(e) { showStatus(e.message || 'Could not start audio connection.', 'error'); }
+        });
+        socket.on('peer-left', id => {
+          closePeer(id);
+          showStatus('The other person left the call. You can wait or leave the room.');
+          $('timer').textContent = 'Waiting for another person…';
+        });
+        socket.on('offer', async ({from, description}) => {
+          try {
+            const pc = createPeer(from);
+            await pc.setRemoteDescription(description);
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            socket.emit('answer', {to: from, description: pc.localDescription});
+          } catch(e) { showStatus('Could not accept the call. Please try joining again.', 'error'); }
+        });
+        socket.on('answer', async ({from, description}) => {
+          const pc = pcs.get(from);
+          if (pc) { try { await pc.setRemoteDescription(description); } catch(e) {} }
+        });
+        socket.on('ice-candidate', async ({from, candidate}) => {
+          const pc = pcs.get(from);
+          if (pc && candidate) { try { await pc.addIceCandidate(candidate); } catch(e) {} }
+        });
+        socket.on('room-error', message => showStatus(message, 'error'));
+        socket.on('room-ready', ({code, peers}) => {
+          roomCode = code; $('room').value = code; $('copyBtn').disabled = false;
+          showStatus('Joined room ' + code + '. Waiting for another person…', 'ok');
+          peers.forEach(p => showStatus('Connected to room. Waiting for a new caller…', 'ok'));
+        });
+      }
+      return socket;
+    }
+    async function ensureMic() {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('Microphone access requires HTTPS or localhost and a supported browser.');
+      if (!localStream) localStream = await navigator.mediaDevices.getUserMedia({audio: {echoCancellation:true, noiseSuppression:true}, video:false});
+    }
+    function createPeer(id) {
+      if (pcs.has(id)) return pcs.get(id);
+      const pc = new RTCPeerConnection(config);
+      pcs.set(id, pc);
+      localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+      pc.onicecandidate = e => { if (e.candidate && socket) socket.emit('ice-candidate', {to:id, candidate:e.candidate}); };
+      pc.ontrack = e => {
+        let audio = document.getElementById('remote-' + id);
+        if (!audio) { audio = document.createElement('audio'); audio.id = 'remote-' + id; audio.autoplay = true; audio.playsInline = true; document.body.appendChild(audio); }
+        audio.srcObject = e.streams[0];
+        audio.play().catch(() => showStatus('Tap the page once to enable incoming audio.', ''));
+        if (!callStartedAt) { callStartedAt = Date.now(); startTimer(); }
+        $('timer').textContent = 'Voice connected';
+      };
+      pc.onconnectionstatechange = () => {
+        if (pc.connectionState === 'connected') showStatus('Your voice call is connected.', 'ok');
+      };
+      return pc;
+    }
+    async function makeOffer(id) {
+      const pc = createPeer(id);
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      socket.emit('offer', {to:id, description:pc.localDescription});
+    }
+    function closePeer(id) {
+      const pc = pcs.get(id); if (pc) { pc.close(); pcs.delete(id); }
+      const audio = document.getElementById('remote-' + id); if (audio) audio.remove();
+    }
+    function startTimer() {
+      clearInterval(timerInterval);
+      timerInterval = setInterval(() => {
+        if (!callStartedAt) return;
+        const sec = Math.floor((Date.now()-callStartedAt)/1000);
+        $('timer').textContent = 'Connected · ' + String(Math.floor(sec/60)).padStart(2,'0') + ':' + String(sec%60).padStart(2,'0');
+      }, 1000);
+    }
+    async function enterRoom(create) {
+      try {
+        const name = getName();
+        socketConnect();
+        showStatus('Requesting microphone access…');
+        await ensureMic();
+        $('callbox').classList.add('active');
+        $('callname').textContent = create ? 'Your voice room' : 'Joined voice room';
+        if (create) socket.emit('create-room', {name});
+        else {
+          const code = $('room').value.trim();
+          if (!code) throw new Error('Enter a room code to join.');
+          socket.emit('join-room', {code, name});
+        }
+        $('createBtn').disabled = true; $('joinBtn').disabled = true;
+      } catch(e) {
+        showStatus(e.message || 'Something went wrong. Please try again.', 'error');
+        if (localStream && !roomCode) { localStream.getTracks().forEach(t=>t.stop()); localStream=null; }
+      }
+    }
+    $('createBtn').addEventListener('click', () => enterRoom(true));
+    $('joinBtn').addEventListener('click', () => enterRoom(false));
+    $('copyBtn').addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(roomCode); showStatus('Room code copied. Share it with your caller.', 'ok'); }
+      catch(e) { $('room').select(); showStatus('Copy is unavailable here. Select and copy the room code manually.'); }
+    });
+    $('muteBtn').addEventListener('click', () => {
+      if (!localStream) return;
+      muted = !muted; localStream.getAudioTracks().forEach(t=>t.enabled=!muted);
+      $('muteBtn').textContent = muted ? 'Unmute microphone' : 'Mute microphone';
+      $('muteBtn').className = 'btn ' + (muted ? 'primary' : 'secondary');
+    });
+    $('leaveBtn').addEventListener('click', () => {
+      if (socket) socket.emit('leave-room');
+      pcs.forEach((pc,id)=>closePeer(id)); pcs.clear();
+      if (localStream) { localStream.getTracks().forEach(t=>t.stop()); localStream=null; }
+      document.querySelectorAll('audio[id^="remote-"]').forEach(a=>a.remove());
+      roomCode=''; callStartedAt=null; clearInterval(timerInterval);
+      $('callbox').classList.remove('active'); $('createBtn').disabled=false; $('joinBtn').disabled=false;
+      $('copyBtn').disabled=true; $('muteBtn').textContent='Mute microphone'; muted=false;
+      showStatus('You left the call. You can start or join another room.');
+    });
+  })();
+  </script>
+</body>
+</html>
